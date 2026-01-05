@@ -1,0 +1,199 @@
+# ==============================================================================
+# miRNA Pathway Analysis Configuration
+# ==============================================================================
+# This YAML file defines all parameters for the 2×2 factorial analysis.
+# 
+# USAGE:
+#   config <- load_analysis_config("analysis_config.yaml")
+#   results <- run_full_analysis(config = config)
+#
+# VERSION CONTROL:
+#   Commit this file with your analysis code to ensure reproducibility.
+#   Any changes to analysis parameters should be made HERE, not in scripts.
+# ==============================================================================
+
+# -----------------------------------------------------------------------------
+# METADATA
+# -----------------------------------------------------------------------------
+metadata:
+  project_name: "MSC-EV miRNA Pathway Analysis"
+  project_id: "CF_EV_miRNA_2024"
+  version: "1.0.0"
+  author: ""
+  description: "2×2 factorial analysis varying miRNA scope and target stringency"
+
+# -----------------------------------------------------------------------------
+# DISEASE CONTEXT
+# -----------------------------------------------------------------------------
+# Define the disease keywords used for pathway filtering.
+# These are applied consistently across ALL analyses.
+disease:
+  name: "Cystic Fibrosis"
+  abbreviation: "CF"
+  keywords:
+    # Inflammation
+    - "inflamm"
+    - "inflammatory"
+    - "acute-phase"
+    # Immune system
+    - "immune"
+    - "immunity"
+    - "immunological"
+    - "lymphocyte"
+    - "leukocyte"
+    - "T cell"
+    - "B cell"
+    - "macrophage"
+    - "neutrophil"
+    - "eosinophil"
+    # Cytokines & signaling
+    - "cytokine"
+    - "interleukin"
+    - "IL-"
+    - "TNF"
+    - "interferon"
+    - "chemokine"
+    - "NF-kappa"
+    - "NFκB"
+    - "MAPK"
+    - "JAK-STAT"
+    # Infection & defense
+    - "infection"
+    - "bacterial"
+    - "pathogen"
+    - "antimicrobial"
+    - "antibacterial"
+    - "antiviral"
+    - "toll-like"
+    - "TLR"
+    - "innate immunity"
+    - "adaptive immunity"
+    # CF-specific
+    - "CFTR"
+    - "cystic fibrosis"
+    - "mucus"
+    - "mucociliary"
+    - "airway"
+    # Tissue damage & repair
+    - "fibrosis"
+    - "wound"
+    - "tissue repair"
+    - "extracellular matrix"
+    - "collagen"
+    - "TGF-beta"
+    - "epithelial"
+
+# -----------------------------------------------------------------------------
+# STRINGENCY DEFINITIONS
+# -----------------------------------------------------------------------------
+# These define what "stringent" and "exploratory" mean.
+# Changing these values will affect ALL analyses that use them.
+stringency:
+  stringent:
+    name: "Stringent"
+    description: "High-confidence targets only"
+    use_all_targets: false
+    min_databases: 2
+    min_publications: 2
+    q_cutoff: 0.05
+    use_case: "Manuscript main figures, validation priorities"
+  
+  exploratory:
+    name: "Exploratory"
+    description: "All predicted targets for maximum sensitivity"
+    use_all_targets: true
+    min_databases: 1
+    min_publications: 1
+    q_cutoff: 0.20
+    use_case: "Hypothesis generation, comprehensive coverage"
+
+# -----------------------------------------------------------------------------
+# miRNA SETS
+# -----------------------------------------------------------------------------
+mirna_sets:
+  # Single miRNA (miR-6126)
+  single:
+    name: "miR-6126"
+    description: "Most abundant miRNA (33% of reads)"
+    mirnas:
+      - "miR-6126"
+    source: "manual"
+    source_file: null
+    abundance_threshold: null
+  
+  # Major miRNAs (≥1% abundance)
+  major:
+    name: "Major miRNAs"
+    description: "All miRNAs with ≥1% average abundance"
+    mirnas: null  # Loaded from source_file
+    source: "compositional_analysis"
+    # UPDATED PATH: points to compositional analysis output
+    source_file: "results/01_compositional/major_miRNAs_1pct_summary.csv"
+    abundance_threshold: 1.0
+
+# -----------------------------------------------------------------------------
+# 2×2 FACTORIAL DESIGN
+# -----------------------------------------------------------------------------
+# Each analysis combines a miRNA set with a stringency mode.
+# The output paths and prefixes are defined here.
+# UPDATED PATHS: All outputs now under results/04_pathway/
+analyses:
+  A:
+    id: "A"
+    name: "miR-6126 Stringent"
+    short_name: "6126_str"
+    mirna_set: "single"
+    stringency_mode: "stringent"
+    output_dir: "results/04_pathway/mir6126/stringent"
+    output_prefix: "CF_mir6126_stringent"
+  
+  B:
+    id: "B"
+    name: "miR-6126 Exploratory"
+    short_name: "6126_exp"
+    mirna_set: "single"
+    stringency_mode: "exploratory"
+    output_dir: "results/04_pathway/mir6126/exploratory"
+    output_prefix: "CF_mir6126_exploratory"
+  
+  C:
+    id: "C"
+    name: "Major miRNAs Stringent"
+    short_name: "major_str"
+    mirna_set: "major"
+    stringency_mode: "stringent"
+    output_dir: "results/04_pathway/major/stringent"
+    output_prefix: "CF_major_stringent"
+  
+  D:
+    id: "D"
+    name: "Major miRNAs Exploratory"
+    short_name: "major_exp"
+    mirna_set: "major"
+    stringency_mode: "exploratory"
+    output_dir: "results/04_pathway/major/exploratory"
+    output_prefix: "CF_major_exploratory"
+
+# -----------------------------------------------------------------------------
+# ENRICHMENT SETTINGS
+# -----------------------------------------------------------------------------
+enrichment:
+  min_gene_count: 5
+  max_gene_count: 500
+  databases:
+    - "GO_BP"
+    - "GO_MF"
+    - "GO_CC"
+    - "KEGG"
+    - "Reactome"
+  fdr_method: "storey"
+
+# -----------------------------------------------------------------------------
+# OUTPUT SETTINGS
+# -----------------------------------------------------------------------------
+output:
+  base_dir: "results/04_pathway"
+  comparison_dir: "results/04_pathway/comparison"
+  save_rdata: true
+  save_metadata: true
+  metadata_format: "json"

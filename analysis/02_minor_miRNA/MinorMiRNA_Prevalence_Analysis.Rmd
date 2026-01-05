@@ -1,0 +1,1011 @@
+---
+title: "Minor miRNA Prevalence Analysis"
+subtitle: "Characterizing the Frequency Distribution of Low-Abundance miRNAs in hMSC EVs"
+author: "DartCF Bioinformatics Core"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: hide
+params:
+  output_dir: !r here::here("results", "02_minor_miRNA")
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
+                      fig.width = 10, fig.height = 6)
+```
+
+# Overview
+<!-- ==============================================================================
+Minor miRNA Prevalence Analysis
+==============================================================================
+This analysis characterizes minor miRNAs (those with <1% mean fractional abundance
+in CF BAL-exposed samples) in extracellular vesicles from human mesenchymal stem 
+cells (hMSCs).
+
+INPUTS:
+  - data/raw/GSE282919_VLP00436_miRNA_P33_21NOV2019_QC_and_Processed_Data.xlsx
+  - data/metadata/sample_metadata.csv
+  - data/metadata/CF_miRNA_annotations.csv (optional, for CF-relevant miRNA table)
+
+OUTPUTS:
+  - results/02_minor_miRNA/minor_miRNA_summary.csv
+  - results/02_minor_miRNA/candidate_minor_miRNAs.csv
+  - results/02_minor_miRNA/minor_miRNAs_01pct_CF.csv
+  - results/02_minor_miRNA/minor_miRNA_prevalence_by_group.csv
+  - results/02_minor_miRNA/prevalence_categories_by_treatment.csv
+  - results/02_minor_miRNA/differential_expression_CF_vs_HC.csv
+  - results/02_minor_miRNA/CF_relevant_miRNAs_annotated.csv
+  - results/02_minor_miRNA/CF_Relevant_miRNAs_Table.docx
+  - results/02_minor_miRNA/*.png (figures)
+============================================================================== -->
+
+**Key questions addressed:**
+
+1. How many minor miRNAs are detected, and what is their collective contribution?
+2. What is the prevalence distribution? (i.e., in how many samples is each miRNA detected?)
+3. Which minor miRNAs are "ubiquitous" (present in all/most samples) vs "sporadic"?
+4. How does abundance relate to prevalence among minor miRNAs?
+
+---
+
+# 1. Load Required Libraries
+
+```{r libraries}
+library(here)
+library(readxl)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(RColorBrewer)
+library(scales)
+library(ggrepel)    # For label repelling on volcano plot
+library(officer)    # For Word document generation
+library(flextable)  # For formatted tables in Word
+
+# Set theme for all plots
+theme_set(theme_bw(base_size = 16))
+
+# Create output directory
+output_dir <- params$output_dir
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Helper function to save figures in both PNG and PDF formats
+save_figure <- function(plot, filename, width = 10, height = 8) {
+  ggsave(file.path(output_dir, paste0(filename, ".png")), plot, 
+         width = width, height = height, dpi = 300)
+  ggsave(file.path(output_dir, paste0(filename, ".pdf")), plot, 
+         width = width, height = height)
+  cat("Saved:", filename, ".png/.pdf\n")
+}
+```
+
+---
+  
+# 2. Load and Prepare Data
+
+```{r load_data}
+# Define input file paths
+raw_data_file <- here("data", "raw", 
+                      "GSE282919_VLP00436_miRNA_P33_21NOV2019_QC_and_Processed_Data.xlsx")
+metadata_file <- here("data", "metadata", "sample_metadata.csv")
+
+# Load sample metadata (curated file with treatment group assignments)
+sample_metadata <- read_csv(metadata_file, show_col_types = FALSE)
+
+# Create sample mapping for compatibility with original code
+sample_mapping <- sample_metadata %>%
+  dplyr::select(Sample, Treatment_Group) %>%
+  as.data.frame()
+rownames(sample_mapping) <- sample_mapping$Sample
+names(sample_mapping)[names(sample_mapping) == "Treatment_Group"] <- "comparison_7"
+
+# Define sample groups for analysis
+analysis_groups <- c("CF_Asp_Neg", "HC", "UNSTIM") 
+samples_to_analyze <- sample_metadata %>%
+  filter(Treatment_Group %in% analysis_groups, In_Current_Study == TRUE) %>%
+  pull(Sample)
+
+cat("Total samples for analysis:", length(samples_to_analyze), "\n")
+cat("Groups included:", paste(analysis_groups, collapse = ", "), "\n")
+```
+
+---
+
+# 3. Calculate Fractional Abundances and Define Minor miRNAs
+
+Minor miRNAs are defined as those with <1% mean fractional abundance **in CF BAL-exposed 
+samples specifically**. This focuses the analysis on miRNAs that are "minor" in the 
+therapeutic context of interest.
+
+```{r calculate_fractions}
+# Load preprocessed count data (already has correct sample mapping and QC filtering)
+count_data <- read_csv(here("data", "processed", "mirna_counts_filtered.csv"), 
+                        show_col_types = FALSE)
+
+# Convert to matrix format
+raw_counts <- as.data.frame(count_data[, -1])  # Remove Gene_ID column
+rownames(raw_counts) <- count_data$Gene_ID
+
+# Subset to analysis samples
+raw_counts <- raw_counts[, samples_to_analyze]
+
+cat("Loaded preprocessed data:", nrow(raw_counts), "miRNAs ×", ncol(raw_counts), "samples\n")
+
+# Calculate total reads per sample
+sample_totals <- colSums(raw_counts, na.rm = TRUE)
+
+# Calculate fractional abundance (each sample sums to 1)
+frac_abundance <- sweep(raw_counts, 2, sample_totals, FUN = "/")
+
+
+# Identify CF BAL samples for defining minor miRNAs
+cf_samples <- sample_mapping$Sample[sample_mapping$comparison_7 == "CF_Asp_Neg"]
+cf_samples <- intersect(cf_samples, samples_to_analyze)
+
+# Calculate mean fractional abundance in CF samples specifically
+cf_frac_abundance <- frac_abundance[, cf_samples]
+cf_mean_frac <- rowMeans(cf_frac_abundance)
+
+# Also calculate overall mean for reference
+mean_frac_abundance <- rowMeans(frac_abundance)
+
+# Define threshold (1% = 0.01 fractional abundance)
+threshold_fraction <- 0.01
+
+# Identify major vs minor miRNAs BASED ON CF SAMPLES
+major_mirna_names <- names(cf_mean_frac[cf_mean_frac >= threshold_fraction])
+minor_mirna_names <- names(cf_mean_frac[cf_mean_frac < threshold_fraction])
+
+# Extract minor miRNA data (all samples, but defined by CF abundance)
+minor_frac_abundance <- frac_abundance[minor_mirna_names, ]
+minor_mean_frac <- mean_frac_abundance[minor_mirna_names]  # Overall mean for display
+minor_cf_mean_frac <- cf_mean_frac[minor_mirna_names]      # CF-specific mean
+
+cat("\n=== miRNA Classification Summary ===\n")
+cat("(Minor defined as <1% mean abundance in CF BAL samples)\n\n")
+cat("Total miRNAs detected:", nrow(frac_abundance), "\n")
+cat("CF BAL samples used for classification:", length(cf_samples), "\n")
+cat("Major miRNAs (≥1% in CF):", length(major_mirna_names), "\n")
+cat("Minor miRNAs (<1% in CF):", length(minor_mirna_names), "\n")
+cat("\nCollective contribution of minor miRNAs (overall mean):", 
+    sprintf("%.2f%%", sum(minor_mean_frac) * 100), "\n")
+```
+
+---
+
+# 4. Calculate Prevalence Metrics
+
+Prevalence is defined as the proportion of samples in which a miRNA is detected (count > 0).
+This distinguishes "ubiquitous" minor miRNAs (present everywhere at low levels) from 
+"sporadic" ones (present in only some samples).
+
+```{r calculate_prevalence}
+# Define detection threshold (any non-zero count)
+# Using raw counts for detection, as fractional abundance can introduce artifacts
+minor_raw_counts <- raw_counts[minor_mirna_names, ]
+
+# Calculate prevalence: proportion of samples where miRNA is detected
+n_samples <- ncol(minor_raw_counts)
+minor_prevalence <- rowSums(minor_raw_counts > 0) / n_samples
+
+# Create summary data frame for minor miRNAs
+minor_summary <- data.frame(
+  miRNA = minor_mirna_names,
+  Mean_Fraction = minor_mean_frac,
+  Mean_Percentage = minor_mean_frac * 100,
+  CF_Mean_Fraction = minor_cf_mean_frac,
+  CF_Mean_Percentage = minor_cf_mean_frac * 100,
+  Prevalence = minor_prevalence,
+  N_Samples_Detected = rowSums(minor_raw_counts > 0),
+  Total_Samples = n_samples,
+  stringsAsFactors = FALSE
+) %>%
+  arrange(desc(Mean_Fraction))
+
+# Add prevalence categories
+minor_summary <- minor_summary %>%
+  mutate(
+    Prevalence_Category = case_when(
+      Prevalence == 1.0 ~ "Ubiquitous (100%)",
+      Prevalence >= 0.75 ~ "High (75-99%)",
+      Prevalence >= 0.50 ~ "Moderate (50-74%)",
+      Prevalence >= 0.25 ~ "Low (25-49%)",
+      TRUE ~ "Rare (<25%)"
+    ),
+    Prevalence_Category = factor(Prevalence_Category, 
+                                  levels = c("Ubiquitous (100%)", "High (75-99%)", 
+                                            "Moderate (50-74%)", "Low (25-49%)", "Rare (<25%)"))
+  )
+
+cat("\n=== Prevalence Distribution Summary ===\n")
+cat("(Overall prevalence: detection across all", n_samples, "samples)\n\n")
+print(table(minor_summary$Prevalence_Category))
+```
+
+---
+
+# 5. Visualizations of Minor miRNA Prevalence
+
+## 5.1 Histogram: Number of Samples Detected
+
+```{r histogram_prevalence}
+# Histogram showing distribution of sample detection counts
+p1 <- ggplot(minor_summary, aes(x = N_Samples_Detected)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "white", alpha = 0.8) +
+  geom_vline(xintercept = n_samples * 0.5, linetype = "dashed", color = "red", size = 0.8) +
+  annotate("text", x = n_samples * 0.5 + 1, y = Inf, 
+           label = "50% of all samples", color = "red", vjust = 2, hjust = 0) +
+  labs(
+    title = "Prevalence Distribution of Minor miRNAs (Detection Across All Samples)",
+    subtitle = sprintf("Minor miRNAs: <1%% mean abundance in CF BAL (n=%d); detection counted across all %d samples", 
+                      length(cf_samples), n_samples),
+    x = "Number of Samples Detected (out of all samples)",
+    y = "Number of miRNAs"
+  ) +
+  scale_x_continuous(breaks = seq(0, n_samples, by = 2)) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold", size = 14))
+
+print(p1)
+save_figure(p1, "minor_miRNA_prevalence_histogram", width = 10, height = 6)
+```
+
+## 5.2 Stacked Bar Plot: Prevalence Categories by Treatment Group
+
+```{r barplot_categories_stacked}
+# Calculate prevalence within each treatment group and assign categories
+treatment_groups <- c("CF_Asp_Neg", "HC", "UNSTIM")
+
+# Get sample counts per group for labeling
+group_sample_counts <- sapply(treatment_groups, function(grp) {
+  grp_samples <- sample_mapping$Sample[sample_mapping$comparison_7 == grp]
+  length(intersect(grp_samples, samples_to_analyze))
+})
+
+group_prevalence_categories <- lapply(treatment_groups, function(grp) {
+  grp_samples <- sample_mapping$Sample[sample_mapping$comparison_7 == grp]
+  grp_samples <- intersect(grp_samples, samples_to_analyze)
+  
+  grp_counts <- minor_raw_counts[, grp_samples, drop = FALSE]
+  n_grp <- ncol(grp_counts)
+  
+  # Calculate prevalence within this group
+  grp_prevalence <- rowSums(grp_counts > 0) / n_grp
+  
+  # Assign prevalence categories
+  prev_cat <- case_when(
+    grp_prevalence == 1.0 ~ "Ubiquitous (100%)",
+    grp_prevalence >= 0.75 ~ "High (75-99%)",
+    grp_prevalence >= 0.50 ~ "Moderate (50-74%)",
+    grp_prevalence >= 0.25 ~ "Low (25-49%)",
+    TRUE ~ "Rare (<25%)"
+  )
+  
+  data.frame(
+    miRNA = rownames(grp_counts),
+    Treatment = grp,
+    Prevalence = grp_prevalence,
+    Prevalence_Category = factor(prev_cat, 
+                                  levels = c("Ubiquitous (100%)", "High (75-99%)", 
+                                            "Moderate (50-74%)", "Low (25-49%)", "Rare (<25%)")),
+    stringsAsFactors = FALSE
+  )
+})
+
+group_prev_cat_df <- bind_rows(group_prevalence_categories)
+
+# Summarize counts by treatment and category
+category_by_group <- group_prev_cat_df %>%
+  group_by(Treatment, Prevalence_Category) %>%
+  summarise(N_miRNAs = n(), .groups = 'drop') %>%
+  complete(Treatment, Prevalence_Category, fill = list(N_miRNAs = 0))
+
+# Set treatment factor order
+category_by_group$Treatment <- factor(category_by_group$Treatment, 
+                                       levels = c("CF_Asp_Neg", "HC", "UNSTIM"))
+
+# Create x-axis labels with sample counts
+treatment_labels <- sprintf("%s\n(n=%d)", names(group_sample_counts), group_sample_counts)
+names(treatment_labels) <- names(group_sample_counts)
+
+# Create stacked bar plot
+p2 <- ggplot(category_by_group, aes(x = Treatment, y = N_miRNAs, 
+                                     fill = Prevalence_Category)) +
+  geom_bar(stat = "identity", alpha = 0.9) +
+  geom_text(aes(label = ifelse(N_miRNAs > 0, N_miRNAs, "")), 
+            position = position_stack(vjust = 0.5), size = 3, color = "white") +
+  scale_fill_brewer(palette = "Blues", direction = -1, name = "Prevalence\nCategory") +
+  scale_x_discrete(labels = treatment_labels) +
+  labs(
+    title = "Minor miRNA Prevalence Categories by Treatment Group",
+    subtitle = "Prevalence calculated within each treatment group (group-specific denominators)",
+    x = "Treatment Group",
+    y = "Number of miRNAs"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "right"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05)))
+
+print(p2)
+save_figure(p2, "minor_miRNA_prevalence_categories", width = 10, height = 6)
+
+# Print summary table
+cat("\n=== Prevalence Categories by Treatment Group ===\n")
+category_summary_wide <- category_by_group %>%
+  pivot_wider(names_from = Treatment, values_from = N_miRNAs)
+print(category_summary_wide)
+```
+
+## 5.3 Scatter Plot: Abundance vs Prevalence (All Samples)
+
+```{r scatter_abundance_prevalence}
+p3 <- ggplot(minor_summary, aes(x = Prevalence * 100, y = Mean_Percentage)) +
+  geom_point(aes(color = Prevalence_Category), alpha = 0.6, size = 2) +
+  geom_hline(yintercept = 0.1, linetype = "dashed", color = "gray50", size = 0.5) +
+  geom_vline(xintercept = 50, linetype = "dashed", color = "gray50", size = 0.5) +
+  scale_color_brewer(palette = "Blues", direction = -1, name = "Prevalence\n(all samples)") +
+  scale_y_log10(labels = scales::label_number(drop0trailing = TRUE)) +
+  labs(
+    title = "Minor miRNA Abundance vs Prevalence (All Samples)",
+    subtitle = sprintf("Prevalence = %% of all %d samples where miRNA detected; candidates in upper-right", 
+                      n_samples),
+    x = sprintf("Prevalence (%% of all %d samples detected)", n_samples),
+    y = expression("Mean Fractional Abundance (%), "*log[10]*" scale")
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "right"
+  ) +
+  annotate("text", x = 75, y = 0.5, label = "Higher priority\nfor investigation", 
+           color = "darkblue", fontface = "italic", size = 3.5)
+
+print(p3)
+save_figure(p3, "minor_miRNA_abundance_vs_prevalence", width = 10, height = 7)
+```
+
+## 5.4 Minor miRNAs with ≥0.1% Abundance in CF Samples
+
+```{r abundant_minor_mirnas}
+# Filter minor miRNAs with ≥0.1% mean abundance in CF samples
+abundance_display_threshold <- 0.001  # 0.1%
+
+minor_01pct_cf <- minor_summary %>%
+  filter(CF_Mean_Fraction >= abundance_display_threshold) %>%
+  arrange(desc(CF_Mean_Fraction)) %>%
+  mutate(Rank = row_number())
+
+n_abundant_minor <- nrow(minor_01pct_cf)
+
+cat("Minor miRNAs with ≥0.1% mean abundance in CF samples:", n_abundant_minor, "\n")
+cat("Prevalence distribution (overall):\n")
+print(table(minor_01pct_cf$Prevalence_Category))
+
+# Calculate figure height based on number of miRNAs
+fig_height <- max(8, n_abundant_minor * 0.18)
+
+p4 <- ggplot(minor_01pct_cf, aes(x = reorder(miRNA, -Rank), y = CF_Mean_Percentage)) +
+  geom_bar(stat = "identity", aes(fill = Prevalence_Category), alpha = 0.8) +
+  geom_text(aes(label = sprintf("%.2f%%", CF_Mean_Percentage)), 
+            hjust = -0.1, size = 2.2) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Blues", direction = -1, 
+                    name = sprintf("Prevalence\n(all %d samples)", n_samples)) +
+  labs(
+    title = sprintf("Minor miRNAs with ≥0.1%% Mean Abundance in CF Samples (n=%d)", n_abundant_minor),
+    subtitle = "All are ubiquitous (detected in 100% of samples); bar color confirms prevalence category",
+    x = "miRNA",
+    y = "Mean Fractional Abundance in CF (%)"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    axis.text.y = element_text(size = 6),
+    legend.position = "right"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)))
+
+print(p4)
+save_figure(p4, "minor_miRNAs_01pct_CF", width = 12, height = fig_height)
+
+# Summary statistics
+cat("\n=== Summary for miRNAs ≥0.1% in CF ===\n")
+cat("Count:", n_abundant_minor, "\n")
+cat("Abundance range:", sprintf("%.2f%% - %.2f%%", 
+                                 min(minor_01pct_cf$CF_Mean_Percentage),
+                                 max(minor_01pct_cf$CF_Mean_Percentage)), "\n")
+cat("Collective contribution (CF mean):", 
+    sprintf("%.2f%%", sum(minor_01pct_cf$CF_Mean_Percentage)), "\n")
+```
+
+---
+
+# 6. Identify Candidate Minor miRNAs for Further Investigation
+
+```{r identify_candidates}
+# Define candidate criteria
+abundance_threshold <- 0.001  # 0.1%
+prevalence_threshold <- 0.50  # 50% of ALL samples
+
+candidates <- minor_summary %>%
+  filter(Mean_Fraction >= abundance_threshold & Prevalence >= prevalence_threshold) %>%
+  arrange(desc(Mean_Fraction))
+
+cat("\n=== Candidate Minor miRNAs for Investigation ===\n")
+cat("Criteria: Mean abundance ≥", abundance_threshold * 100, "% AND prevalence ≥", 
+    prevalence_threshold * 100, "% of all", n_samples, "samples\n\n")
+cat("Number of candidates:", nrow(candidates), "\n\n")
+
+if(nrow(candidates) > 0) {
+  candidates_display <- candidates %>% 
+    dplyr::select(miRNA, Mean_Percentage, Prevalence, N_Samples_Detected) %>%
+    head(50)
+  print(candidates_display)
+  
+  if(nrow(candidates) > 50) {
+    cat("\n... and", nrow(candidates) - 50, "more candidates\n")
+  }
+  
+  cat("\nCollective contribution of candidates:", 
+      sprintf("%.2f%%", sum(candidates$Mean_Percentage)), "\n")
+}
+```
+
+## 6.1 Visualize Candidates
+
+```{r visualize_candidates}
+if(nrow(candidates) > 0) {
+  p5 <- ggplot(minor_summary, aes(x = Prevalence * 100, y = Mean_Percentage)) +
+    geom_point(color = "gray70", alpha = 0.4, size = 2) +
+    geom_point(data = candidates, aes(color = Mean_Percentage), size = 3) +
+    geom_hline(yintercept = abundance_threshold * 100, linetype = "dashed", 
+               color = "red", size = 0.8) +
+    geom_vline(xintercept = prevalence_threshold * 100, linetype = "dashed", 
+               color = "red", size = 0.8) +
+    scale_color_viridis_c(option = "plasma", name = "Abundance\n(%)") +
+    scale_y_log10(labels = scales::label_number(drop0trailing = TRUE)) +
+    labs(
+      title = "Candidate Minor miRNAs for Investigation",
+      subtitle = sprintf("%d miRNAs meeting criteria (abundance ≥%.1f%%, prevalence ≥%.0f%% of all %d samples)",
+                        nrow(candidates), abundance_threshold * 100, prevalence_threshold * 100, n_samples),
+      x = sprintf("Prevalence (%% of all %d samples)", n_samples),
+      y = expression("Mean Fractional Abundance (%), "*log[10]*" scale")
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      legend.position = "right"
+    ) +
+    annotate("rect", xmin = prevalence_threshold * 100, xmax = 100, 
+             ymin = abundance_threshold * 100, ymax = 1, 
+             alpha = 0.1, fill = "blue")
+  
+  print(p5)
+  save_figure(p5, "candidate_minor_miRNAs_highlighted", width = 10, height = 7)
+}
+```
+
+---
+
+# 7. Prevalence by Treatment Group - Detailed Analysis
+
+```{r prevalence_by_group}
+# Reshape to wide format for comparison
+group_prev_wide <- group_prev_cat_df %>%
+  dplyr::select(miRNA, Treatment, Prevalence) %>%
+  pivot_wider(names_from = Treatment, values_from = Prevalence, names_prefix = "Prev_")
+
+# Merge with overall summary
+minor_summary_extended <- minor_summary %>%
+  left_join(group_prev_wide, by = "miRNA")
+
+cat("\n=== Group-Specific Prevalence Summary ===\n")
+cat("Prev_CF_Asp_Neg = prevalence within CF samples (n=", group_sample_counts["CF_Asp_Neg"], ")\n", sep = "")
+cat("Prev_HC = prevalence within HC samples (n=", group_sample_counts["HC"], ")\n", sep = "")
+cat("Prev_UNSTIM = prevalence within UNSTIM samples (n=", group_sample_counts["UNSTIM"], ")\n\n", sep = "")
+cat("(Showing first 20 rows)\n\n")
+print(head(minor_summary_extended %>% 
+             dplyr::select(miRNA, Mean_Percentage, Prevalence, starts_with("Prev_")), 20))
+```
+
+## 7.1 Compare Prevalence Across Groups (CF vs HC)
+
+```{r compare_group_prevalence}
+if("Prev_CF_Asp_Neg" %in% names(minor_summary_extended) & 
+   "Prev_HC" %in% names(minor_summary_extended)) {
+  
+  n_cf <- group_sample_counts["CF_Asp_Neg"]
+  n_hc <- group_sample_counts["HC"]
+  
+  minor_summary_extended <- minor_summary_extended %>%
+    mutate(
+      CF_HC_Prev_Diff = Prev_CF_Asp_Neg - Prev_HC,
+      Prev_Pattern = case_when(
+        Prev_CF_Asp_Neg == 1 & Prev_HC == 1 ~ "Both Ubiquitous",
+        Prev_CF_Asp_Neg > Prev_HC + 0.25 ~ "CF-enriched",
+        Prev_HC > Prev_CF_Asp_Neg + 0.25 ~ "HC-enriched",
+        TRUE ~ "Similar"
+      )
+    )
+  
+  cat("\n=== CF vs HC Prevalence Patterns ===\n")
+  print(table(minor_summary_extended$Prev_Pattern))
+  
+  p6 <- ggplot(minor_summary_extended, aes(x = Prev_HC * 100, y = Prev_CF_Asp_Neg * 100)) +
+    geom_point(aes(color = Prev_Pattern, size = Mean_Percentage), alpha = 0.6) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
+    scale_color_manual(values = c("Both Ubiquitous" = "darkblue", 
+                                   "CF-enriched" = "red",
+                                   "HC-enriched" = "green4", 
+                                   "Similar" = "gray70"),
+                       name = "Pattern") +
+    scale_size_continuous(name = "Abundance\n(%)", range = c(1, 5)) +
+    labs(
+      title = "Minor miRNA Prevalence: CF vs HC BAL Exposure (Group-Specific)",
+      subtitle = "Prevalence = % of samples within each group; points above diagonal = higher in CF",
+      x = sprintf("Prevalence in HC (%% of %d HC samples)", n_hc),
+      y = sprintf("Prevalence in CF (%% of %d CF samples)", n_cf)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      legend.position = "right"
+    ) +
+    coord_fixed(ratio = 1)
+  
+  print(p6)
+  save_figure(p6, "minor_miRNA_prevalence_CF_vs_HC", width = 10, height = 8)
+}
+```
+
+---
+
+# 8. Differential Expression Analysis: CF vs HC BAL Exposure
+
+## 8.1 Statistical Testing (t-tests)
+
+```{r differential_expression_setup}
+# Get HC samples
+hc_samples <- sample_mapping$Sample[sample_mapping$comparison_7 == "HC"]
+hc_samples <- intersect(hc_samples, samples_to_analyze)
+
+n_cf <- length(cf_samples)
+n_hc <- length(hc_samples)
+
+cat("Samples for differential expression analysis:\n")
+cat("  CF BAL samples:", n_cf, "\n")
+cat("  HC BAL samples:", n_hc, "\n")
+```
+
+```{r perform_ttests}
+# Combine minor ≥0.1% and major miRNAs for testing
+mirnas_to_test <- unique(c(minor_01pct_cf$miRNA, major_mirna_names))
+
+cat("Testing", length(mirnas_to_test), "miRNAs (≥0.1% in CF or major)\n\n")
+
+# Perform t-tests for each miRNA
+ttest_results <- lapply(mirnas_to_test, function(mir) {
+  cf_values <- as.numeric(frac_abundance[mir, cf_samples])
+  hc_values <- as.numeric(frac_abundance[mir, hc_samples])
+  
+  cf_mean <- mean(cf_values)
+  hc_mean <- mean(hc_values)
+  
+  pseudo <- 1e-8
+  log2fc <- log2((cf_mean + pseudo) / (hc_mean + pseudo))
+  
+  ttest <- tryCatch({
+    t.test(cf_values, hc_values)
+  }, error = function(e) {
+    list(p.value = NA, statistic = NA)
+  })
+  
+  if(cf_mean * 100 >= 1) {
+    abundance_cat <- "Major (≥1%)"
+  } else if(cf_mean * 100 >= 0.1) {
+    abundance_cat <- "Minor (0.1-1%)"
+  } else {
+    abundance_cat <- "Minor (<0.1%)"
+  }
+  
+  data.frame(
+    miRNA = mir,
+    CF_Mean_Pct = cf_mean * 100,
+    HC_Mean_Pct = hc_mean * 100,
+    log2FC = log2fc,
+    p_value = ttest$p.value,
+    t_statistic = as.numeric(ttest$statistic),
+    Abundance_Category = abundance_cat,
+    stringsAsFactors = FALSE
+  )
+})
+
+ttest_df <- do.call(rbind, ttest_results)
+ttest_df$neg_log10_p <- -log10(ttest_df$p_value)
+ttest_df$Significant <- abs(ttest_df$log2FC) > 1 & ttest_df$p_value < 0.05
+ttest_df <- ttest_df %>% arrange(p_value)
+
+cat("=== Differential Expression Summary ===\n")
+cat("Total tested:", nrow(ttest_df), "\n")
+cat("Significant (|log2FC| > 1 & p < 0.05):", sum(ttest_df$Significant, na.rm = TRUE), "\n\n")
+
+cat("Top 20 by p-value:\n")
+print(head(ttest_df %>% dplyr::select(miRNA, CF_Mean_Pct, HC_Mean_Pct, log2FC, p_value, Abundance_Category), 20))
+
+write.csv(ttest_df, file.path(output_dir, "differential_expression_CF_vs_HC.csv"), row.names = FALSE)
+```
+
+## 8.2 Volcano Plot
+
+```{r volcano_plot, fig.width=12, fig.height=9}
+# Load CF-relevant miRNA list for highlighting
+cf_annotations_file <- here("data", "metadata", "CF_miRNA_annotations.csv")
+cf_relevant_mirnas <- if(file.exists(cf_annotations_file)) {
+  read.csv(cf_annotations_file, stringsAsFactors = FALSE)
+} else {
+  data.frame(miRNA = character(0), Impact = character(0))
+}
+
+# Prepare base volcano data from t-test results (miRNAs ≥0.1%)
+volcano_data <- ttest_df %>%
+  filter(!is.na(p_value) & !is.na(log2FC)) %>%
+  mutate(
+    Abundance_Category = factor(Abundance_Category, 
+                                 levels = c("Major (≥1%)", "Minor (0.1-1%)", "Minor (<0.1%)")),
+    Is_CF_Relevant = miRNA %in% cf_relevant_mirnas$miRNA
+  )
+
+# Add CF-relevant miRNAs that are below 0.1% threshold (not in ttest_df)
+# First, calculate stats for CF-relevant miRNAs not in ttest_df
+cf_relevant_below_threshold <- cf_relevant_mirnas %>%
+  filter(!miRNA %in% ttest_df$miRNA) %>%
+  filter(miRNA %in% rownames(frac_abundance))
+
+if(nrow(cf_relevant_below_threshold) > 0) {
+  cf_below_stats <- lapply(cf_relevant_below_threshold$miRNA, function(mir) {
+    cf_values <- as.numeric(frac_abundance[mir, cf_samples])
+    hc_values <- as.numeric(frac_abundance[mir, hc_samples])
+    cf_mean <- mean(cf_values, na.rm = TRUE)
+    hc_mean <- mean(hc_values, na.rm = TRUE)
+    pseudo <- 1e-8
+    log2fc <- log2((cf_mean + pseudo) / (hc_mean + pseudo))
+    ttest <- tryCatch(t.test(cf_values, hc_values), error = function(e) list(p.value = NA))
+    
+    data.frame(
+      miRNA = mir,
+      CF_Mean_Pct = cf_mean * 100,
+      HC_Mean_Pct = hc_mean * 100,
+      log2FC = log2fc,
+      p_value = ttest$p.value,
+      neg_log10_p = -log10(ttest$p.value),
+      Abundance_Category = factor("Minor (<0.1%)", 
+                                   levels = c("Major (≥1%)", "Minor (0.1-1%)", "Minor (<0.1%)")),
+      Is_CF_Relevant = TRUE,
+      Significant = abs(log2fc) > 1 & ttest$p.value < 0.05,
+      stringsAsFactors = FALSE
+    )
+  })
+  cf_relevant_below_threshold <- do.call(rbind, cf_below_stats)
+} else {
+  cf_relevant_below_threshold <- data.frame()
+}
+
+# Combine: all tested miRNAs + CF-relevant below threshold
+volcano_data_full <- bind_rows(
+  volcano_data,
+  cf_relevant_below_threshold
+)
+
+cat("Volcano plot includes:\n")
+cat("  - miRNAs from t-test (≥0.1%):", nrow(volcano_data), "\n")
+cat("  - CF-relevant below threshold:", nrow(cf_relevant_below_threshold), "\n")
+cat("  - Total CF-relevant that will be labeled:", sum(volcano_data_full$Is_CF_Relevant), "\n")
+
+# Get CF-relevant data for annotation
+cf_relevant_for_plot <- volcano_data_full %>% 
+  filter(Is_CF_Relevant) %>%
+  left_join(cf_relevant_mirnas %>% dplyr::select(miRNA, Impact), by = "miRNA")
+
+# Create volcano plot
+p_volcano <- ggplot(volcano_data_full, aes(x = log2FC, y = neg_log10_p)) +
+  # Background points (non-CF-relevant)
+  geom_point(data = volcano_data_full %>% filter(!Is_CF_Relevant),
+             aes(size = Abundance_Category), 
+             color = "gray70", alpha = 0.5) +
+  # CF-relevant points
+  geom_point(data = cf_relevant_for_plot,
+             aes(size = Abundance_Category, color = Impact), 
+             alpha = 0.8) +
+  # Vertical lines for |log2FC| > 1
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "darkred", size = 0.8) +
+  # Horizontal line for p = 0.05
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "darkblue", size = 0.5) +
+  # Labels for CF-relevant miRNAs
+  geom_label_repel(data = cf_relevant_for_plot,
+                   aes(label = miRNA, color = Impact),
+                   size = 3,
+                   box.padding = 0.5,
+                   point.padding = 0.3,
+                   segment.color = "gray50",
+                   max.overlaps = 30,
+                   show.legend = FALSE) +
+  # Scales
+  scale_size_manual(values = c("Major (≥1%)" = 5, "Minor (0.1-1%)" = 3, "Minor (<0.1%)" = 1.5),
+                    name = "Abundance\nCategory") +
+  scale_color_manual(values = c("Beneficial" = "green4", 
+                                 "Harmful" = "red3",
+                                 "Mixed" = "darkorange", 
+                                 "Unclear" = "purple"),
+                     name = "Intrinsic\nImpact") +
+  # Labels
+  labs(
+    title = "Volcano Plot: Differential miRNA Abundance (CF vs HC BAL Exposure)",
+    subtitle = sprintf("All CF-relevant miRNAs annotated (n=%d); dashed lines: |log2FC|=1, p=0.05",
+                      nrow(cf_relevant_for_plot)),
+    x = expression(log[2]*" Fold Change (CF / HC)"),
+    y = expression(-log[10]*"(p-value)")
+  ) +
+  # Theme
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  ) +
+  # Annotations for quadrants
+  annotate("text", x = -2.5, y = max(volcano_data_full$neg_log10_p, na.rm = TRUE) * 0.95, 
+         label = "Lower in CF", color = "darkred", fontface = "bold", size = 4) +
+  annotate("text", x = 2.5, y = max(volcano_data_full$neg_log10_p, na.rm = TRUE) * 0.95, 
+         label = "Higher in CF", color = "darkred", fontface = "bold", size = 4)
+
+print(p_volcano)
+save_figure(p_volcano, "volcano_CF_vs_HC", width = 12, height = 9)
+```
+
+Key features restored:
+- Gray background points for non-CF-relevant miRNAs
+- CF-relevant points colored by **Impact** (Beneficial=green, Harmful=red, Mixed=orange, Unclear=purple)
+- Point size by **Abundance Category**
+- `geom_label_repel` labels for **all** CF-relevant miRNAs
+- CF-relevant miRNAs below 0.1% threshold included
+- "Lower in CF" / "Higher in CF" quadrant annotations
+
+
+
+## 8.3 CF-Relevant miRNAs (if annotation file exists)
+
+```{r cf_relevant_mirnas}
+# Check for CF-relevant miRNA annotations file
+cf_annotations_file <- here("data", "metadata", "CF_miRNA_annotations.csv")
+
+if(file.exists(cf_annotations_file)) {
+  cf_relevant_mirnas <- read.csv(cf_annotations_file, stringsAsFactors = FALSE)
+  
+  cat("Loaded", nrow(cf_relevant_mirnas), "CF-relevant miRNA annotations\n")
+  cat("Impact categories:", paste(unique(cf_relevant_mirnas$Impact), collapse = ", "), "\n\n")
+  
+  # Merge with t-test results
+  cf_relevant_annotated <- cf_relevant_mirnas %>%
+    left_join(ttest_df %>% dplyr::select(miRNA, CF_Mean_Pct, HC_Mean_Pct, log2FC, p_value, Abundance_Category),
+              by = "miRNA")
+  
+  # For miRNAs not in ttest_df, get their values directly
+  for(i in 1:nrow(cf_relevant_annotated)) {
+    mir <- cf_relevant_annotated$miRNA[i]
+    if(is.na(cf_relevant_annotated$CF_Mean_Pct[i]) && mir %in% rownames(frac_abundance)) {
+      cf_values <- as.numeric(frac_abundance[mir, cf_samples])
+      hc_values <- as.numeric(frac_abundance[mir, hc_samples])
+      cf_mean <- mean(cf_values)
+      hc_mean <- mean(hc_values)
+      pseudo <- 1e-8
+      
+      cf_relevant_annotated$CF_Mean_Pct[i] <- cf_mean * 100
+      cf_relevant_annotated$HC_Mean_Pct[i] <- hc_mean * 100
+      cf_relevant_annotated$log2FC[i] <- log2((cf_mean + pseudo) / (hc_mean + pseudo))
+      
+      ttest <- tryCatch({
+        t.test(cf_values, hc_values)
+      }, error = function(e) {
+        list(p.value = NA)
+      })
+      cf_relevant_annotated$p_value[i] <- ttest$p.value
+    }
+  }
+  
+  # Add overall mean percentage
+  cf_relevant_annotated <- cf_relevant_annotated %>%
+    mutate(Mean_Pct = (CF_Mean_Pct + HC_Mean_Pct) / 2)
+  
+  # Determine delta effect based on Impact and log2FC direction
+  cf_relevant_annotated <- cf_relevant_annotated %>%
+    mutate(
+      Delta_Effect = case_when(
+        p_value >= 0.05 ~ "N.S.",
+        Impact == "Beneficial" & log2FC < 0 ~ "Unfavorable",
+        Impact == "Beneficial" & log2FC > 0 ~ "Favorable",
+        Impact == "Harmful" & log2FC < 0 ~ "Favorable",
+        Impact == "Harmful" & log2FC > 0 ~ "Unfavorable",
+        Impact == "Mixed" ~ "Context-dependent",
+        TRUE ~ "Unclear"
+      )
+    )
+  
+  # Save annotated table
+  write.csv(cf_relevant_annotated %>% arrange(desc(Mean_Pct)), 
+            file.path(output_dir, "CF_relevant_miRNAs_annotated.csv"), row.names = FALSE)
+  
+  cat("CF-relevant miRNAs annotated and saved.\n")
+  print(cf_relevant_annotated %>% 
+          dplyr::select(miRNA, Impact, Mean_Pct, log2FC, p_value, Delta_Effect) %>%
+          arrange(desc(Mean_Pct)))
+  
+  # Create Word document if officer/flextable available
+  tryCatch({
+    cf_table_for_doc <- cf_relevant_annotated %>%
+      arrange(desc(Mean_Pct)) %>%
+      dplyr::select(miRNA, Impact, Mean_Pct, log2FC, p_value, Delta_Effect, Key_Mechanism) %>%
+      mutate(
+        Mean_Pct = sprintf("%.3f%%", Mean_Pct),
+        log2FC = sprintf("%.2f", log2FC),
+        p_value = ifelse(p_value < 0.001, sprintf("%.2e", p_value), sprintf("%.4f", p_value))
+      ) %>%
+      rename(
+        `Mean %` = Mean_Pct,
+        `Δ (log2FC)` = log2FC,
+        `p-value` = p_value,
+        `CF Effect` = Delta_Effect,
+        `Key Mechanisms` = Key_Mechanism
+      )
+    
+    ft <- flextable(cf_table_for_doc) %>%
+      theme_booktabs() %>%
+      fontsize(size = 9, part = "all") %>%
+      fontsize(size = 10, part = "header") %>%
+      bold(part = "header") %>%
+      align(align = "center", part = "header") %>%
+      align(j = "miRNA", align = "left", part = "body") %>%
+      align(j = c("Impact", "Mean %", "Δ (log2FC)", "p-value", "CF Effect"), align = "center", part = "body") %>%
+      align(j = "Key Mechanisms", align = "left", part = "body") %>%
+      flextable::width(j = "miRNA", width = 1.1) %>%
+      flextable::width(j = "Impact", width = 0.7) %>%
+      flextable::width(j = "Mean %", width = 0.6) %>%
+      flextable::width(j = "Δ (log2FC)", width = 0.6) %>%
+      flextable::width(j = "p-value", width = 0.65) %>%
+      flextable::width(j = "CF Effect", width = 0.9) %>%
+      flextable::width(j = "Key Mechanisms", width = 2.5) %>%
+      bg(i = ~ Impact == "Beneficial", j = "Impact", bg = "#CCFFCC") %>%
+      bg(i = ~ Impact == "Harmful", j = "Impact", bg = "#FFCCCC") %>%
+      bg(i = ~ Impact == "Mixed", j = "Impact", bg = "#FFE5CC") %>%
+      bg(i = ~ Impact == "Unclear", j = "Impact", bg = "#E5E5E5") %>%
+      bg(i = ~ `CF Effect` == "Favorable", j = "CF Effect", bg = "#CCFFCC") %>%
+      bg(i = ~ `CF Effect` == "Unfavorable", j = "CF Effect", bg = "#FFCCCC") %>%
+      bg(i = ~ `CF Effect` == "Context-dependent", j = "CF Effect", bg = "#FFE5CC") %>%
+      bg(i = ~ `CF Effect` == "Unclear", j = "CF Effect", bg = "#E5E5E5") %>%
+      bg(i = ~ `CF Effect` == "N.S.", j = "CF Effect", bg = "#E5E5E5") %>%
+      valign(valign = "top", part = "body")
+    
+    doc <- read_docx() %>%
+      body_add_par("CF-Relevant miRNAs in hMSC EV Cargo", style = "heading 1") %>%
+      body_add_par("", style = "Normal") %>%
+      body_add_par(sprintf("Analysis of miRNAs with known or suspected relevance to cystic fibrosis pathophysiology. Differential expression comparing CF BAL-exposed (n=%d) vs HC BAL-exposed (n=%d) hMSC extracellular vesicles.", n_cf, n_hc), style = "Normal") %>%
+      body_add_par("", style = "Normal") %>%
+      body_add_flextable(ft) %>%
+      body_add_par("", style = "Normal") %>%
+      body_add_par("Table Notes:", style = "heading 2") %>%
+      body_add_par("• Impact: Intrinsic effect of miRNA (Beneficial = anti-fibrotic/anti-inflammatory; Harmful = pro-fibrotic or reduces CFTR; Mixed = context-dependent; Unclear = insufficient evidence)", style = "Normal") %>%
+      body_add_par("• Mean %: Average fractional abundance across all samples", style = "Normal") %>%
+      body_add_par("• Δ (log2FC): Fold change in CF vs HC; positive = higher in CF, negative = higher in HC", style = "Normal") %>%
+      body_add_par("• CF Effect: Whether the observed change is favorable given the miRNA's intrinsic impact. N.S. = not significant (p ≥ 0.05)", style = "Normal") %>%
+      body_add_par("• p-values from Welch's t-test comparing fractional abundance between groups", style = "Normal")
+    
+    print(doc, target = file.path(output_dir, "CF_Relevant_miRNAs_Table.docx"))
+    cat("\nWord document created: CF_Relevant_miRNAs_Table.docx\n")
+  }, error = function(e) {
+    cat("Note: Could not create Word document:", e$message, "\n")
+  })
+  
+} else {
+  cat("Note: CF_miRNA_annotations.csv not found at", cf_annotations_file, "\n")
+  cat("Skipping CF-relevant miRNA annotation section.\n")
+  cat("To enable this section, create the file with columns: miRNA, Impact, Key_Mechanism\n")
+}
+```
+
+---
+
+# 9. Export Data for Further Analysis
+
+```{r export_data}
+# Export full minor miRNA summary
+write.csv(minor_summary_extended, file.path(output_dir, "minor_miRNA_summary.csv"), row.names = FALSE)
+
+# Export candidate list
+if(nrow(candidates) > 0) {
+  write.csv(candidates, file.path(output_dir, "candidate_minor_miRNAs.csv"), row.names = FALSE)
+}
+
+# Export minor miRNAs ≥0.1% in CF
+write.csv(minor_01pct_cf, file.path(output_dir, "minor_miRNAs_01pct_CF.csv"), row.names = FALSE)
+
+# Export group-specific prevalence data
+write.csv(group_prev_cat_df, file.path(output_dir, "minor_miRNA_prevalence_by_group.csv"), row.names = FALSE)
+
+# Export prevalence category summary by treatment
+write.csv(category_by_group, file.path(output_dir, "prevalence_categories_by_treatment.csv"), row.names = FALSE)
+
+cat("\n=== Data Files Exported ===\n")
+cat("1. minor_miRNA_summary.csv - Full summary with prevalence metrics\n")
+cat("2. candidate_minor_miRNAs.csv - Filtered candidates meeting criteria\n")
+cat("3. minor_miRNAs_01pct_CF.csv - Minor miRNAs ≥0.1% in CF samples\n")
+cat("4. minor_miRNA_prevalence_by_group.csv - Prevalence by treatment group\n")
+cat("5. prevalence_categories_by_treatment.csv - Category counts by treatment\n")
+cat("6. differential_expression_CF_vs_HC.csv - t-test results\n")
+
+cat("\n=== Figures Created ===\n")
+cat("1. minor_miRNA_prevalence_histogram.png/.pdf\n")
+cat("2. minor_miRNA_prevalence_categories.png/.pdf\n")
+cat("3. minor_miRNA_abundance_vs_prevalence.png/.pdf\n")
+cat("4. minor_miRNAs_01pct_CF.png/.pdf\n")
+cat("5. candidate_minor_miRNAs_highlighted.png/.pdf\n")
+cat("6. minor_miRNA_prevalence_CF_vs_HC.png/.pdf\n")
+cat("7. volcano_CF_vs_HC.png/.pdf\n")
+
+cat("\n=== All outputs saved to: ===\n")
+cat(output_dir, "\n")
+```
+
+---
+
+# 10. Summary Statistics
+
+```{r summary_stats}
+cat("\n")
+cat("================================================================================\n")
+cat("                         MINOR miRNA ANALYSIS SUMMARY                           \n")
+cat("================================================================================\n\n")
+
+cat("PREVALENCE OVERVIEW:\n")
+cat("--------------------\n")
+cat("Total minor miRNAs (<1% mean abundance in CF BAL samples):", nrow(minor_summary), "\n")
+cat("Collective contribution (overall mean):", sprintf("%.2f%%", sum(minor_summary$Mean_Percentage)), "\n\n")
+
+cat("By Prevalence Category (overall, across all", n_samples, "samples):\n")
+for(cat_name in levels(minor_summary$Prevalence_Category)) {
+  n_cat <- sum(minor_summary$Prevalence_Category == cat_name)
+  pct_cat <- n_cat / nrow(minor_summary) * 100
+  contrib <- sum(minor_summary$Mean_Percentage[minor_summary$Prevalence_Category == cat_name])
+  cat(sprintf("  %s: %d miRNAs (%.1f%%), contributing %.2f%% of reads\n", 
+              cat_name, n_cat, pct_cat, contrib))
+}
+
+cat("\nKEY FINDING - ABUNDANT MINOR miRNAs:\n")
+cat("------------------------------------\n")
+cat("Minor miRNAs with ≥0.1% mean abundance in CF:", n_abundant_minor, "\n")
+cat("Collective contribution in CF:", sprintf("%.2f%%", sum(minor_01pct_cf$CF_Mean_Percentage)), "\n")
+
+cat("\nCANDIDATES FOR INVESTIGATION:\n")
+cat("-----------------------------\n")
+cat("Criteria: ≥0.1% overall abundance AND ≥50% overall prevalence\n")
+cat("Number meeting criteria:", nrow(candidates), "\n")
+if(nrow(candidates) > 0) {
+  cat("Collective contribution:", sprintf("%.2f%%", sum(candidates$Mean_Percentage)), "\n")
+}
+
+cat("\n================================================================================\n")
+```
+
+---
+
+# 11. Session Information
+
+```{r session_info}
+sessionInfo()
+```
