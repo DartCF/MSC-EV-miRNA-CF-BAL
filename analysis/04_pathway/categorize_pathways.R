@@ -103,7 +103,7 @@ cat("(Note: some pathways may fit multiple categories)\n\n")
 # ------------------------------------------------------------------------------
 
 create_plot <- function() {
-  par(mar = c(5, 12, 4, 2))
+  par(mar = c(5, 12, 2, 2))
   
   barplot(
     rev(category_counts),
@@ -114,13 +114,9 @@ create_plot <- function() {
     border = NA,
     xlim = c(0, max(category_counts) * 1.05),
     xlab = "Number of Pathways",
-    main = "CF-Relevant Pathway Categories",
     cex.names = 0.9,
-    cex.lab = 1.1,
-    cex.main = 1.2
+    cex.lab = 1.1
   )
-  
-  mtext(paste0("q < ", qvalue_threshold), side = 3, line = 0.3, cex = 0.9, col = "gray40")
 }
 
 # Save PDF
@@ -174,7 +170,7 @@ db_colors <- c(
 )
 
 create_stacked_plot <- function() {
-  par(mar = c(5, 12, 4, 8), xpd = TRUE)
+  par(mar = c(5, 12, 2, 8), xpd = TRUE)
   
   barplot(
     t(cross_tab[nrow(cross_tab):1, ]),
@@ -184,10 +180,8 @@ create_stacked_plot <- function() {
     border = NA,
     xlim = c(0, max(rowSums(cross_tab)) * 1.05),
     xlab = "Number of Pathways",
-    main = "CF-Relevant Pathway Categories by Database",
     cex.names = 0.9,
-    cex.lab = 1.1,
-    cex.main = 1.2
+    cex.lab = 1.1
   )
   
   legend(
@@ -200,8 +194,6 @@ create_stacked_plot <- function() {
     cex = 0.9,
     title = "Database"
   )
-  
-  mtext(paste0("q < ", qvalue_threshold), side = 3, line = 0.3, cex = 0.9, col = "gray40")
 }
 
 # Save stacked PDF

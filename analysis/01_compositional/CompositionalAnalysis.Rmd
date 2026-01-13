@@ -221,15 +221,11 @@ p1 <- ggplot(major_plot_data, aes(x = miRNA, y = Percentage)) +
             hjust = -0.1, size = 3.5) +
   coord_flip() +
   labs(
-    title = "Major miRNAs (≥1% Average Abundance)",
-    subtitle = sprintf("%d miRNAs collectively represent %.1f%% of all reads", 
-                      n_major, total_major_fraction * 100),
     x = "miRNA",
     y = "Mean Fractional Abundance (%)"
   ) +
   theme_minimal(base_size = 12) +
   theme(
-    plot.title = element_text(face = "bold", size = 14),
     axis.text.y = element_text(face = "bold")
   ) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.15)))
@@ -561,6 +557,7 @@ if(n_sig_raw > 0) {
     )
   
   # Prepare annotation data from Tukey HSD results
+  # Include both significant (p < 0.05) AND borderline (p < 0.10) comparisons
   annotation_data <- data.frame()
   
   for(mirna in significant_mirnas) {
@@ -573,17 +570,17 @@ if(n_sig_raw > 0) {
       p_values <- tukey_df$`p adj`
       
       for(i in 1:length(comparisons)) {
-        if(p_values[i] < 0.05) {
+        # Include comparisons with p < 0.10 (captures borderline significance)
+        if(p_values[i] < 0.10) {
           comp <- comparisons[i]
           groups <- strsplit(comp, "-")[[1]]
           groups <- recode(groups, "CF_Asp_Neg" = "CF")
           
+          # Format exact p-value for display
           if(p_values[i] < 0.001) {
-            sig_label <- "***"
-          } else if(p_values[i] < 0.01) {
-            sig_label <- "**"
+            sig_label <- sprintf("p < 0.001")
           } else {
-            sig_label <- "*"
+            sig_label <- sprintf("p = %.3f", p_values[i])
           }
           
           annotation_data <- rbind(annotation_data, data.frame(
@@ -594,6 +591,7 @@ if(n_sig_raw > 0) {
             p_value = p_values[i],
             label = sig_label,
             y_position = max_val,
+            is_borderline = p_values[i] >= 0.05,  # Flag borderline results
             stringsAsFactors = FALSE
           ))
         }
@@ -610,20 +608,15 @@ if(n_sig_raw > 0) {
     facet_wrap(~ miRNA, scales = "free_y", ncol = 4) +
     scale_fill_brewer(palette = "Set2") +
     labs(
-      title = "Major miRNAs with Significant Treatment Differences",
-      subtitle = "Red diamonds = group means; * p<0.05, ** p<0.01, *** p<0.001 (Tukey HSD)",
-      x = "Treatment Group",
-      y = "Fractional Abundance (%)",
-      fill = "Treatment"
+      x = "",
+      y = "Fractional Abundance (%)"
     ) +
     theme_bw(base_size = 11) +
     theme(
-      plot.title = element_text(face = "bold", size = 14),
-      plot.subtitle = element_text(size = 10),
       axis.text.x = element_text(angle = 45, hjust = 1),
       strip.text = element_text(face = "bold", size = 10),
       strip.background = element_rect(fill = "grey95"),
-      legend.position = "bottom"
+      legend.position = "none"
     )
   
   # Add significance annotations if any exist
@@ -632,7 +625,7 @@ if(n_sig_raw > 0) {
       group_by(miRNA) %>%
       mutate(
         max_y = max(sig_plot_data$percentage[sig_plot_data$miRNA == miRNA]),
-        bracket_y = max_y + (max_y * 0.05 * row_number())
+        bracket_y = max_y + (max_y * 0.10 * row_number())  # Increased spacing for p-value text
       ) %>%
       ungroup()
     
@@ -643,28 +636,50 @@ if(n_sig_raw > 0) {
     annotation_data_positioned$x_mid <- (annotation_data_positioned$x1 + 
                                          annotation_data_positioned$x2) / 2
     
+    # Use different line styles: solid for significant, dashed for borderline
     p_sig <- p_sig +
+      # Vertical segments (left)
       geom_segment(data = annotation_data_positioned,
-                   aes(x = x1, xend = x1, y = bracket_y, yend = bracket_y * 1.02),
-                   inherit.aes = FALSE, color = "black") +
+                   aes(x = x1, xend = x1, y = bracket_y, yend = bracket_y * 1.02,
+                       linetype = is_borderline),
+                   inherit.aes = FALSE, color = "black", show.legend = FALSE) +
+      # Horizontal segments
       geom_segment(data = annotation_data_positioned,
-                   aes(x = x1, xend = x2, y = bracket_y * 1.02, yend = bracket_y * 1.02),
-                   inherit.aes = FALSE, color = "black") +
+                   aes(x = x1, xend = x2, y = bracket_y * 1.02, yend = bracket_y * 1.02,
+                       linetype = is_borderline),
+                   inherit.aes = FALSE, color = "black", show.legend = FALSE) +
+      # Vertical segments (right)
       geom_segment(data = annotation_data_positioned,
-                   aes(x = x2, xend = x2, y = bracket_y * 1.02, yend = bracket_y),
-                   inherit.aes = FALSE, color = "black") +
+                   aes(x = x2, xend = x2, y = bracket_y * 1.02, yend = bracket_y,
+                       linetype = is_borderline),
+                   inherit.aes = FALSE, color = "black", show.legend = FALSE) +
+      # P-value labels
       geom_text(data = annotation_data_positioned,
-                aes(x = x_mid, y = bracket_y * 1.04, label = label),
-                inherit.aes = FALSE, size = 4, fontface = "bold")
+                aes(x = x_mid, y = bracket_y * 1.05, label = label,
+                    fontface = ifelse(is_borderline, "italic", "plain")),
+                inherit.aes = FALSE, size = 3) +
+      scale_linetype_manual(values = c("FALSE" = "solid", "TRUE" = "dashed"))
   }
   
   print(p_sig)
   save_figure(p_sig, "major_miRNAs_significant_differences", 
               width = 12, height = max(6, n_sig_raw*1.5))
-  cat("\nSignificance annotations show Tukey HSD post-hoc test results:\n")
-  cat("  * p < 0.05\n")
-  cat(" ** p < 0.01\n")
-  cat("*** p < 0.001\n")
+  
+  # Print exact p-values to console for reference
+  cat("\n=== Exact p-values shown in Figure 3 ===\n")
+  cat("(Solid lines = p < 0.05; Dashed lines = 0.05 ≤ p < 0.10)\n\n")
+  if(nrow(annotation_data) > 0) {
+    for(i in 1:nrow(annotation_data)) {
+      status <- ifelse(annotation_data$is_borderline[i], "(borderline)", "(significant)")
+      cat(sprintf("%s: %s vs %s, p = %.4f %s\n", 
+                  annotation_data$miRNA[i],
+                  annotation_data$group1[i],
+                  annotation_data$group2[i],
+                  annotation_data$p_value[i],
+                  status))
+    }
+  }
+  
 } else {
   cat("No significant differences detected; skipping visualization.\n")
 }
@@ -739,15 +754,47 @@ if (n_major <= 12) {
 }
 names(stack_colors) <- rev(c(major_mirna_names, "Other"))
 
-# Create stacked bar plot
-p6 <- ggplot(stack_data, aes(x = sample, y = total_fraction, fill = miRNA_category)) +
+# ---------------------------------------------------------------------------
+# Figure 1 (official): Dan's version with simplified labels and larger fonts
+# ---------------------------------------------------------------------------
+# Create sample number labels (remove "sample" prefix, show only numbers)
+stack_data_fig1 <- stack_data %>%
+  mutate(
+    sample_num = gsub("[^0-9]", "", sample)  # Extract numeric portion only
+  )
+
+p6_fig1 <- ggplot(stack_data_fig1, aes(x = sample_num, y = total_fraction, fill = miRNA_category)) +
   geom_bar(stat = "identity", width = 0.8) +
   scale_fill_manual(values = stack_colors, name = "miRNA") +
   facet_wrap(~ treatment, scales = "free_x", nrow = 1) +
   labs(
-    title = "miRNA Composition by Sample and Treatment",
-    subtitle = sprintf("Major miRNAs (≥1%%, n=%d) shown individually (~%.1f%% of reads), remaining as 'Other'",
-                     n_major, total_major_fraction * 100),
+    x = "Sample Number",
+    y = "Fractional Abundance"
+  ) +
+  theme_classic(base_size = 14) +  # Increased from 12
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12),  # Increased
+    axis.text.y = element_text(size = 12),  # Added
+    axis.title = element_text(size = 14, face = "bold"),  # Added
+    strip.text = element_text(size = 14, face = "bold"),  # Increased from 11
+    strip.background = element_rect(fill = "grey95", color = "grey50"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 11, family = "mono"),  # Increased from 9
+    legend.title = element_text(size = 12, face = "bold")  # Added
+  ) +
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE, reverse = TRUE))
+
+print(p6_fig1)
+save_figure(p6_fig1, "major_miRNAs_stacked_by_sample", width = 14, height = 8)
+
+# ---------------------------------------------------------------------------
+# Alternative version: Original with full sample names (archived)
+# ---------------------------------------------------------------------------
+p6_original <- ggplot(stack_data, aes(x = sample, y = total_fraction, fill = miRNA_category)) +
+  geom_bar(stat = "identity", width = 0.8) +
+  scale_fill_manual(values = stack_colors, name = "miRNA") +
+  facet_wrap(~ treatment, scales = "free_x", nrow = 1) +
+  labs(
     x = "",
     y = "Fractional Abundance"
   ) +
@@ -757,14 +804,12 @@ p6 <- ggplot(stack_data, aes(x = sample, y = total_fraction, fill = miRNA_catego
     strip.text = element_text(size = 11, face = "bold"),
     strip.background = element_rect(fill = "grey95", color = "grey50"),
     legend.position = "bottom",
-    legend.text = element_text(size = 9, family = "mono"),
-    plot.title = element_text(size = 14, face = "bold"),
-    plot.subtitle = element_text(size = 11)
+    legend.text = element_text(size = 9, family = "mono")
   ) +
   guides(fill = guide_legend(nrow = 2, byrow = TRUE, reverse = TRUE))
 
-print(p6)
-save_figure(p6, "major_miRNAs_stacked_by_sample", width = 14, height = 8)
+# Save original version with different filename (not overwriting Fig 1)
+save_figure(p6_original, "major_miRNAs_stacked_by_sample_full_labels", width = 14, height = 8)
 ```
 
 ---

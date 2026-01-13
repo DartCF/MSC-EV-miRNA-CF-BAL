@@ -252,7 +252,7 @@ analyze_focus_mirna <- function(target_sets, focus_mirna) {
 #' @param max_scale Maximum value for color scale (default: auto)
 #' @return ggplot object
 plot_jaccard_heatmap <- function(jaccard_matrix, 
-                                  title = "miRNA Target Similarity (Jaccard Index)",
+                                  title = NULL,
                                   max_scale = NULL) {
   
   # Convert to long format
@@ -279,18 +279,19 @@ plot_jaccard_heatmap <- function(jaccard_matrix,
   
   p <- ggplot(jaccard_long, aes(x = miRNA1, y = miRNA2, fill = Jaccard)) +
     geom_tile(color = "white", linewidth = 0.5) +
-    geom_text(aes(label = sprintf("%.2f", Jaccard)), size = 3) +
+    geom_text(aes(label = sprintf("%.2f", Jaccard)), size = 5) +
     scale_fill_gradient2(low = "white", mid = "#FFEDA0", high = "#E31A1C",
                         midpoint = max_scale / 2,
                         limits = c(0, max_scale),
                         name = "Jaccard\nIndex") +
-    labs(title = title, x = "", y = "") +
-    theme_minimal() +
+    labs(x = "", y = "") +
+    theme_minimal(base_size = 16) +
     theme(
-      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
-      axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
-      axis.text.y = element_text(size = 10),
-      panel.grid = element_blank()
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+      axis.text.y = element_text(size = 14),
+      panel.grid = element_blank(),
+      legend.title = element_text(size = 14),
+      legend.text = element_text(size = 13)
     ) +
     coord_fixed()
   
@@ -321,15 +322,17 @@ plot_unique_targets <- function(unique_summary, highlight_mirna = NULL) {
     coord_flip() +
     scale_fill_manual(values = c("Unique" = "#2E86AB", "Shared" = "#A23B72"),
                       name = "Target Type") +
-    labs(title = "Unique vs Shared Targets per miRNA",
-         x = "miRNA",
+    labs(x = "",
          y = "Number of Target Genes") +
-    theme_minimal() +
+    theme_minimal(base_size = 16) +
     theme(
-      plot.title = element_text(size = 14, face = "bold"),
-      axis.text.y = element_text(size = 10),
+      axis.text.y = element_text(size = 14),
+      axis.text.x = element_text(size = 13),
+      axis.title = element_text(size = 15),
       panel.grid.major.y = element_blank(),
-      legend.position = "bottom"
+      legend.position = "bottom",
+      legend.title = element_text(size = 14),
+      legend.text = element_text(size = 13)
     )
   
   return(p)
@@ -359,21 +362,18 @@ plot_pct_unique <- function(unique_summary, highlight_mirna = NULL) {
     geom_bar(stat = "identity", alpha = 0.85) +
     geom_hline(yintercept = 50, linetype = "dashed", color = "red", alpha = 0.7) +
     geom_text(aes(label = sprintf("%.1f%%", Pct_Unique)), 
-              hjust = -0.1, size = 3.5) +
+              hjust = -0.1, size = 5) +
     coord_flip() +
     scale_fill_manual(values = c("Focus" = "#EFC000", "Other" = "#0073C2"),
                       guide = "none") +
     scale_y_continuous(limits = c(0, 105), expand = c(0, 0)) +
-    labs(title = "Percentage of Unique Targets",
-         subtitle = if (!is.null(highlight_mirna)) 
-           sprintf("%s highlighted", gsub("hsa-", "", highlight_mirna)) else NULL,
-         x = "miRNA",
+    labs(x = "",
          y = "% of Targets that are Unique") +
-    theme_minimal() +
+    theme_minimal(base_size = 16) +
     theme(
-      plot.title = element_text(size = 14, face = "bold"),
-      plot.subtitle = element_text(size = 10, color = "gray40"),
-      axis.text.y = element_text(size = 10),
+      axis.text.y = element_text(size = 14),
+      axis.text.x = element_text(size = 13),
+      axis.title = element_text(size = 15),
       panel.grid.major.y = element_blank()
     )
   
@@ -401,21 +401,16 @@ plot_focus_overlap <- function(focus_analysis) {
   
   p <- ggplot(plot_data, aes(x = miRNA_short, y = Shared_Targets)) +
     geom_bar(stat = "identity", fill = "#E74C3C", alpha = 0.85) +
-    geom_text(aes(label = Shared_Targets), hjust = -0.2, size = 4) +
+    geom_text(aes(label = Shared_Targets), hjust = -0.2, size = 5.5) +
     coord_flip() +
     scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
-    labs(title = sprintf("%s Target Overlap with Other miRNAs", focus_short),
-         subtitle = sprintf("%d/%d targets shared (%.1f%% unique)",
-                           focus_analysis$n_shared,
-                           focus_analysis$n_total,
-                           focus_analysis$pct_unique),
-         x = "miRNA",
+    labs(x = "",
          y = "Number of Shared Targets") +
-    theme_minimal() +
+    theme_minimal(base_size = 16) +
     theme(
-      plot.title = element_text(size = 14, face = "bold"),
-      plot.subtitle = element_text(size = 10, color = "gray40"),
-      axis.text.y = element_text(size = 10),
+      axis.text.y = element_text(size = 14),
+      axis.text.x = element_text(size = 13),
+      axis.title = element_text(size = 15),
       panel.grid.major.y = element_blank()
     )
   
@@ -442,10 +437,12 @@ plot_summary_figure <- function(results) {
   
   if (is.null(p4)) {
     combined <- (p1 | p2) / p3 +
-      plot_annotation(title = "miRNA Target Overlap Analysis Summary")
+      plot_annotation(tag_levels = 'A') &
+      theme(plot.tag = element_text(size = 22, face = "bold"))
   } else {
     combined <- (p1 | p2) / (p3 | p4) +
-      plot_annotation(title = "miRNA Target Overlap Analysis Summary")
+      plot_annotation(tag_levels = 'A') &
+      theme(plot.tag = element_text(size = 22, face = "bold"))
   }
   
   return(combined)
@@ -457,107 +454,82 @@ plot_summary_figure <- function(results) {
 
 #' Run complete miRNA target overlap analysis
 #' 
-#' @param input_file Path to CSV file with miRNA-target data
-#' @param output_dir Directory for output files (default: same as input)
-#' @param mirna_col Name of miRNA column (default: "mature_mirna_id")
-#' @param target_col Name of target column (default: "target_symbol")
-#' @param focus_mirna miRNA to analyze in detail (default: "hsa-miR-6126")
-#' @param save_outputs Save CSV and plot files (default: TRUE)
-#' @param verbose Print progress messages (default: TRUE)
-#' @return List with all analysis results
+#' @param input_file Path to CSV with miRNA-target pairs (auto-detected if NULL)
+#' @param output_dir Directory for outputs (auto-detected if NULL)
+#' @param focus_mirna miRNA to analyze in detail (optional)
+#' @param save_outputs Whether to save CSV and plot files
+#' @param verbose Print progress messages
+#' @return List with analysis results
 analyze_mirna_overlap <- function(input_file = NULL,
                                    output_dir = NULL,
-                                   mirna_col = "mature_mirna_id",
-                                   target_col = "target_symbol",
-                                   focus_mirna = "hsa-miR-6126",
+                                   focus_mirna = NULL,
                                    save_outputs = TRUE,
                                    verbose = TRUE) {
   
   # --------------------------------------------------------------------------
-  # Setup
+  # Set up paths
   # --------------------------------------------------------------------------
+  
+  if (is.null(input_file)) {
+    # Auto-detect input file
+    possible_paths <- c(
+      here("results", "04_pathway", "major", "stringent", 
+           "CF_major_stringent_high_confidence_targets.csv"),
+      here("results", "04_pathway", "CF_high_confidence_targets.csv")
+    )
+    
+    for (path in possible_paths) {
+      if (file.exists(path)) {
+        input_file <- path
+        break
+      }
+    }
+    
+    if (is.null(input_file)) {
+      stop("Could not find input file. Please specify input_file parameter.")
+    }
+  }
+  
+  if (is.null(output_dir)) {
+    output_dir <- dirname(input_file)
+  }
   
   if (verbose) {
     cat("\n")
     cat("================================================================================\n")
-    cat("              miRNA TARGET OVERLAP ANALYSIS                                     \n")
+    cat("                    miRNA Target Overlap Analysis                               \n")
     cat("================================================================================\n\n")
-  }
-  
-  # Auto-detect input file if not provided
-  if (is.null(input_file)) {
-    default_files <- c(
-      here("results", "04_pathway", "major", "stringent", 
-           "CF_major_stringent_high_confidence_targets.csv"),
-      "CF_major_stringent_high_confidence_targets.csv"
-    )
-    for (f in default_files) {
-      if (file.exists(f)) {
-        input_file <- f
-        break
-      }
-    }
-    if (is.null(input_file)) {
-      stop("No input file specified and no default file found.\n",
-           "Expected: results/04_pathway/major/stringent/CF_major_stringent_high_confidence_targets.csv")
-    }
-  }
-  
-  if (!file.exists(input_file)) {
-    stop(sprintf("Input file not found: %s", input_file))
-  }
-  
-  # Set output directory
-  if (is.null(output_dir)) {
-    output_dir <- dirname(input_file)
-  }
-  if (!dir.exists(output_dir)) {
-    dir.create(output_dir, recursive = TRUE)
-  }
-  
-  if (verbose) {
-    cat(sprintf("Input file: %s\n", input_file))
-    cat(sprintf("Output directory: %s\n\n", output_dir))
+    cat("Input file:", input_file, "\n")
+    cat("Output directory:", output_dir, "\n\n")
   }
   
   # --------------------------------------------------------------------------
-  # Load and clean data
+  # Load and process data
   # --------------------------------------------------------------------------
   
-  df <- read.csv(input_file, stringsAsFactors = FALSE)
+  if (verbose) cat("Loading target data...\n")
   
-  # Check for required columns
-  if (!mirna_col %in% colnames(df)) {
-    stop(sprintf("Column '%s' not found in data", mirna_col))
-  }
-  if (!target_col %in% colnames(df)) {
-    stop(sprintf("Column '%s' not found in data", target_col))
-  }
+  targets_df <- read.csv(input_file, stringsAsFactors = FALSE)
   
-  # Report data quality
-  n_total <- nrow(df)
-  n_empty <- sum(df[[target_col]] == "" | is.na(df[[target_col]]))
-  
-  if (verbose) {
-    cat("DATA QUALITY:\n")
-    cat("-------------\n")
-    cat(sprintf("Total rows: %d\n", n_total))
-    cat(sprintf("Rows with empty target: %d (excluded)\n", n_empty))
-    cat(sprintf("Valid rows: %d\n\n", n_total - n_empty))
+  # Check required columns
+  required_cols <- c("mature_mirna_id", "target_symbol")
+  missing_cols <- setdiff(required_cols, names(targets_df))
+  if (length(missing_cols) > 0) {
+    stop(sprintf("Missing required columns: %s", paste(missing_cols, collapse = ", ")))
   }
   
-  # Get target sets
-  target_sets <- get_mirna_target_sets(df, mirna_col, target_col)
+  # Get target sets for each miRNA
+  target_sets <- get_mirna_target_sets(targets_df)
   n_mirnas <- length(target_sets)
   n_unique_targets <- length(unique(unlist(target_sets)))
   
   if (verbose) {
-    cat(sprintf("Number of miRNAs: %d\n", n_mirnas))
-    cat(sprintf("Total unique targets: %d\n\n", n_unique_targets))
+    cat(sprintf("  Found %d miRNAs\n", n_mirnas))
+    cat(sprintf("  Total unique target genes: %d\n\n", n_unique_targets))
   }
   
   # --------------------------------------------------------------------------
-  # Calculate Jaccard matrix
+  # Pairwise Jaccard analysis
   # --------------------------------------------------------------------------
   
   if (verbose) cat("Calculating pairwise Jaccard indices...\n")
@@ -566,20 +538,14 @@ analyze_mirna_overlap <- function(input_file = NULL,
   jaccard_matrix <- pairwise_results$jaccard
   
   if (verbose) {
-    cat("✓ Jaccard matrix calculated\n\n")
-    
-    # Print summary
-    cat("JACCARD SIMILARITY SUMMARY:\n")
-    cat("---------------------------\n")
+    # Summary of Jaccard values (excluding diagonal)
     off_diag <- jaccard_matrix[row(jaccard_matrix) != col(jaccard_matrix)]
-    cat(sprintf("Range (off-diagonal): %.4f - %.4f\n", 
-                min(off_diag, na.rm = TRUE), max(off_diag, na.rm = TRUE)))
-    cat(sprintf("Mean (off-diagonal): %.4f\n", mean(off_diag, na.rm = TRUE)))
-    cat(sprintf("Median (off-diagonal): %.4f\n\n", median(off_diag, na.rm = TRUE)))
+    cat(sprintf("  Jaccard range: %.3f - %.3f\n", min(off_diag), max(off_diag)))
+    cat(sprintf("  Mean Jaccard: %.3f\n\n", mean(off_diag)))
   }
   
   # --------------------------------------------------------------------------
-  # Find unique targets
+  # Unique targets analysis
   # --------------------------------------------------------------------------
   
   if (verbose) cat("Finding unique targets per miRNA...\n")
@@ -587,12 +553,13 @@ analyze_mirna_overlap <- function(input_file = NULL,
   unique_results <- find_unique_targets(target_sets)
   
   if (verbose) {
-    cat("✓ Unique targets identified\n\n")
-    cat("UNIQUE TARGETS SUMMARY:\n")
-    cat("-----------------------\n")
+    cat("✓ Unique target analysis complete\n\n")
+    
+    cat("UNIQUE TARGET SUMMARY:\n")
+    cat("---------------------------\n")
     print(unique_results$summary[, c("miRNA_short", "Total_Targets", 
-                                      "Unique_Targets", "Pct_Unique")], 
-          row.names = FALSE, digits = 1)
+                                      "Unique_Targets", "Pct_Unique")],
+          row.names = FALSE)
     cat("\n")
   }
   
