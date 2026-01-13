@@ -4,6 +4,9 @@
 # Collects all figures, tables, and supporting files into a single archive
 # for sharing with collaborators or journal submission.
 #
+# This script reflects the final manuscript structure (5 figures, 4 tables)
+# as agreed with co-authors in January 2026.
+#
 # USAGE:
 #   source(here("archive_for_submission.R"))
 #
@@ -27,33 +30,31 @@ cat("===========================================================================
 dir.create(archive_dir, showWarnings = FALSE)
 dir.create(file.path(archive_dir, "figures"), showWarnings = FALSE)
 dir.create(file.path(archive_dir, "tables"), showWarnings = FALSE)
-dir.create(file.path(archive_dir, "supplementary"), showWarnings = FALSE)
 
 # ==============================================================================
-# Collect Figures
+# FIGURE MANIFEST
+# ==============================================================================
+#
+# Fig 1: Major miRNA composition stacked by sample
+# Fig 2: Major miRNA mean fractional abundance  
+# Fig 3: Major miRNAs with significant treatment differences
+# Fig 4: miRNA target overlap summary (4 panels: A, B, C, D)
+# Fig 5: CF-relevant pathway categories (multi-database)
+#
 # ==============================================================================
 
 cat("Collecting figures...\n")
 
 figures <- list(
-  # Compositional analysis
+  # Compositional analysis (from results/01_compositional/)
   "Fig_1" = here("results", "01_compositional", "major_miRNAs_stacked_by_sample.png"),
   "Fig_2" = here("results", "01_compositional", "major_miRNAs_barplot.png"),
-  "Fig_3A" = here("results", "01_compositional", "major_miRNAs_significant_differences.png"),
-  "Fig_3B" = here("results", "01_compositional", "abundance_density_plots.png"),
-  "Fig_3C" = here("results", "01_compositional", "simpson_diversity_significance.png"),
+  "Fig_3" = here("results", "01_compositional", "major_miRNAs_significant_differences.png"),
   
-  # Pathway analysis
+
+  # Pathway analysis (from results/04_pathway/)
   "Fig_4" = here("results", "04_pathway", "major", "stringent", "mirna_overlap_summary.png"),
-  "Fig_5A" = here("results", "04_pathway", "pathway_counts_barplot.png"),
-  "Fig_5B" = here("results", "04_pathway", "major", "stringent", "CF_major_stringent_GO_BP_dotplot.png"),
-  "Fig_5C" = here("results", "04_pathway", "pathway_categories_stacked_barplot.png"),
-  
-  # Minor miRNA analysis
-  "Fig_6" = here("results", "02_minor_miRNA", "volcano_CF_vs_HC.png"),
-  
-  # DESeq2 analysis
-  "Fig_7" = here("results", "03_deseq2", "volcano_faceted_by_abundance.png")
+  "Fig_5" = here("results", "04_pathway", "pathway_categories_stacked_barplot.png")
 )
 
 for (fig_name in names(figures)) {
@@ -65,14 +66,25 @@ for (fig_name in names(figures)) {
     if (file.exists(pdf_src)) {
       file.copy(pdf_src, file.path(archive_dir, "figures", paste0(fig_name, ".pdf")))
     }
-    cat("  ✓", fig_name, "\n")
+    cat("
+  ✓", fig_name, "\n")
   } else {
     cat("  ✗", fig_name, "(not found:", src, ")\n")
   }
 }
 
 # ==============================================================================
-# Collect Tables
+# TABLE MANIFEST
+# ==============================================================================
+#
+# Table 1: Pathway category summary (counts by functional category)
+# Table 2: Convergent genes - Inflammation pathways
+# Table 3: Convergent genes - Tissue remodeling pathways
+# Table 4: CF-relevant miRNAs in hMSC EV cargo (with literature references)
+#
+# Note: Tables 2 and 3 derive from the same source file (gene_pathway_counts.csv)
+#       filtered by pathway category.
+#
 # ==============================================================================
 
 cat("\nCollecting tables...\n")
@@ -99,31 +111,6 @@ docx_src <- here("results", "02_minor_miRNA", "CF_Relevant_miRNAs_Table.docx")
 if (file.exists(docx_src)) {
   file.copy(docx_src, file.path(archive_dir, "tables", "Table_4_CF_relevant_miRNAs.docx"))
   cat("  ✓ Table_4 Word document\n")
-}
-
-# ==============================================================================
-# Collect Supplementary Files
-# ==============================================================================
-
-cat("\nCollecting supplementary files...\n")
-
-supplementary <- list(
-  "major_miRNAs_1pct_summary" = here("results", "01_compositional", "major_miRNAs_1pct_summary.csv"),
-  "disease_relevant_pathways" = here("results", "04_pathway", "major", "stringent", 
-                                      "CF_major_stringent_disease_relevant_pathways.csv"),
-  "differential_expression_CF_vs_HC" = here("results", "02_minor_miRNA", 
-                                             "differential_expression_CF_vs_HC.csv"),
-  "minor_miRNA_summary" = here("results", "02_minor_miRNA", "minor_miRNA_summary.csv")
-)
-
-for (supp_name in names(supplementary)) {
-  src <- supplementary[[supp_name]]
-  if (file.exists(src)) {
-    file.copy(src, file.path(archive_dir, "supplementary", paste0(supp_name, ".csv")))
-    cat("  ✓", supp_name, "\n")
-  } else {
-    cat("  ✗", supp_name, "(not found)\n")
-  }
 }
 
 # ==============================================================================
@@ -164,10 +151,10 @@ cat("===========================================================================
 cat("Archive location:", zip_file, "\n\n")
 
 cat("Contents:\n")
-cat("  figures/     - All manuscript figures (PNG + PDF)\n")
-cat("  tables/      - Tables 1-4 (CSV + Word)\n")
-cat("  supplementary/ - Supporting data files\n")
+cat("  figures/     - 5 figures (PNG + PDF)\n")
+cat("  tables/      - 4 tables (CSV + Word)\n")
 cat("  manuscript_manifest.csv - Figure/table to script mapping\n")
+
 cat("\n")
-cat("Ready to send to Sara!\n")
+cat("Ready for submission to Cytotherapy!\n")
 cat("================================================================================\n\n")
